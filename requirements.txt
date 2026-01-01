@@ -1,3 +1,3 @@
-flask
-pytelegrambotapi
-gunicorn
+flask==3.0.0
+pyTelegramBotAPI==4.14.0
+huggingface_hub==0.20.0
