@@ -15,6 +15,12 @@ bot = telebot.TeleBot(BOT_TOKEN)
 
 SETTINGS_FILE = "chat_settings.json"
 
+MODELS = {
+    "friday": "saikrishnagorijala/Friday-V3",
+    "rugpt": "ai-forever/rugpt3large_based_on_gpt2",
+    "rugpt-medium": "ai-forever/rugpt3medium_based_on_gpt2"
+}
+
 def load_settings():
     if os.path.exists(SETTINGS_FILE):
         with open(SETTINGS_FILE, "r") as f:
@@ -54,8 +60,13 @@ def update_chat_setting(chat_id, key, value):
     save_settings(settings)
 
 def generate_with_hf(prompt, settings):
-    url = f"https://router.huggingface.co/hf-inference/models/{settings['model']}"
-    headers = {"Authorization": f"Bearer {HF_TOKEN}"}
+    model = settings["model"]
+    url = f"https://router.huggingface.co/hf-inference/models/{model}"
+    
+    headers = {
+        "Authorization": f"Bearer {HF_TOKEN}",
+        "Content-Type": "application/json"
+    }
     
     payload = {
         "inputs": prompt,
@@ -69,19 +80,25 @@ def generate_with_hf(prompt, settings):
         }
     }
     
-    response = requests.post(url, headers=headers, json=payload, timeout=60)
+    response = requests.post(url, headers=headers, json=payload, timeout=120)
+    
+    if response.status_code == 503:
+        raise Exception("Модель загружается, подожди 20-30 сек и попробуй снова")
     
     if response.status_code != 200:
-        raise Exception(f"API error {response.status_code}: {response.text[:200]}")
+        raise Exception(f"API {response.status_code}: {response.text[:200]}")
     
     result = response.json()
     
     if isinstance(result, list) and len(result) > 0:
         return result[0].get("generated_text", "")
-    elif isinstance(result, dict) and "generated_text" in result:
-        return result["generated_text"]
-    else:
-        return str(result)
+    elif isinstance(result, dict):
+        if "generated_text" in result:
+            return result["generated_text"]
+        if "error" in result:
+            raise Exception(result["error"])
+    
+    return str(result)
 
 @app.route('/')
 def home():
@@ -98,8 +115,35 @@ def start_cmd(message):
         "/f_generate <текст> - продолжить историю\n"
         "/f_temperature 0.9 - креативность (0.1-2.0)\n"
         "/f_maxtokens 100 - длина (10-500)\n"
+        "/f_model <название> - сменить модель\n"
+        "/f_models - список моделей\n"
         "/f_settings - настройки"
     )
+
+@bot.message_handler(commands=['f_models'])
+def list_models(message):
+    text = "Доступные модели:\n\n"
+    for key, val in MODELS.items():
+        text += f"• {key} → {val}\n"
+    text += "\nИспользуй: /f_model friday"
+    bot.reply_to(message, text)
+
+@bot.message_handler(commands=['f_model'])
+def set_model(message):
+    args = message.text.split()
+    if len(args) < 2:
+        bot.reply_to(message, "/f_model friday\n/f_model rugpt\n\nИли полное имя:\n/f_model username/model-name")
+        return
+    
+    model_key = args[1].lower()
+    
+    if model_key in MODELS:
+        model = MODELS[model_key]
+    else:
+        model = args[1]
+    
+    update_chat_setting(message.chat.id, "model", model)
+    bot.reply_to(message, f"✓ Model: {model}")
 
 @bot.message_handler(commands=['f_temperature'])
 def set_temperature(message):
@@ -133,16 +177,48 @@ def set_max_tokens(message):
     except:
         bot.reply_to(message, "Ошибка")
 
+@bot.message_handler(commands=['f_topp'])
+def set_topp(message):
+    try:
+        args = message.text.split()
+        if len(args) < 2:
+            bot.reply_to(message, "/f_topp 0.95")
+            return
+        val = float(args[1])
+        if 0.1 <= val <= 1.0:
+            update_chat_setting(message.chat.id, "top_p", val)
+            bot.reply_to(message, f"✓ Top P: {val}")
+        else:
+            bot.reply_to(message, "0.1 - 1.0")
+    except:
+        bot.reply_to(message, "Ошибка")
+
+@bot.message_handler(commands=['f_penalty'])
+def set_penalty(message):
+    try:
+        args = message.text.split()
+        if len(args) < 2:
+            bot.reply_to(message, "/f_penalty 1.2")
+            return
+        val = float(args[1])
+        if 1.0 <= val <= 2.0:
+            update_chat_setting(message.chat.id, "repetition_penalty", val)
+            bot.reply_to(message, f"✓ Penalty: {val}")
+        else:
+            bot.reply_to(message, "1.0 - 2.0")
+    except:
+        bot.reply_to(message, "Ошибка")
+
 @bot.message_handler(commands=['f_settings'])
 def show_settings(message):
     s = get_chat_settings(message.chat.id)
     bot.reply_to(message, 
         f"⚙️ Настройки:\n"
+        f"Model: {s['model']}\n"
         f"Temperature: {s['temperature']}\n"
         f"Max tokens: {s['max_tokens']}\n"
         f"Top P: {s['top_p']}\n"
-        f"Penalty: {s['repetition_penalty']}\n"
-        f"Model: {s['model']}"
+        f"Penalty: {s['repetition_penalty']}"
     )
 
 @bot.message_handler(commands=['f_generate'])
@@ -158,20 +234,34 @@ def generate_text(message):
     
     try:
         result = generate_with_hf(prompt, settings)
+        if len(result) > 4000:
+            result = result[:4000] + "..."
         bot.edit_message_text(result, message.chat.id, wait_msg.message_id)
     except Exception as e:
-        bot.edit_message_text(f"❌ {str(e)[:300]}", message.chat.id, wait_msg.message_id)
+        bot.edit_message_text(f"❌ {str(e)[:500]}", message.chat.id, wait_msg.message_id)
 
 def run_bot():
     print("Bot starting...")
+    time.sleep(3)
+    
+    try:
+        bot.delete_webhook(drop_pending_updates=True)
+    except:
+        pass
+    
     time.sleep(2)
-    bot.remove_webhook()
+    
     while True:
         try:
-            bot.polling(none_stop=True, interval=0, timeout=20)
+            print("Polling started...")
+            bot.polling(none_stop=True, interval=1, timeout=30)
         except Exception as e:
             print(f"Error: {e}")
-            time.sleep(10)
+            time.sleep(15)
+            try:
+                bot.delete_webhook(drop_pending_updates=True)
+            except:
+                pass
 
 if __name__ == '__main__':
     bot_thread = Thread(target=run_bot, daemon=True)
