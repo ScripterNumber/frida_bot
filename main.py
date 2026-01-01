@@ -16,9 +16,15 @@ bot = telebot.TeleBot(BOT_TOKEN)
 SETTINGS_FILE = "chat_settings.json"
 
 MODELS = {
-    "friday": "saikrishnagorijala/Friday-V3",
-    "rugpt": "ai-forever/rugpt3large_based_on_gpt2",
-    "rugpt-medium": "ai-forever/rugpt3medium_based_on_gpt2"
+    "gpt2": "openai-community/gpt2",
+    "gpt2-large": "openai-community/gpt2-large",
+    "gpt2-xl": "openai-community/gpt2-xl",
+    "bloom": "bigscience/bloom-560m",
+    "bloom-1b": "bigscience/bloom-1b1",
+    "mistral": "mistralai/Mistral-7B-v0.1",
+    "llama": "meta-llama/Llama-2-7b-hf",
+    "rugpt": "ai-forever/rugpt3medium_based_on_gpt2",
+    "rugpt-small": "ai-forever/rugpt3small_based_on_gpt2"
 }
 
 def load_settings():
@@ -40,7 +46,7 @@ def get_chat_settings(chat_id):
             "max_tokens": 100,
             "top_p": 0.95,
             "repetition_penalty": 1.2,
-            "model": "saikrishnagorijala/Friday-V3"
+            "model": "openai-community/gpt2"
         }
         save_settings(settings)
     return settings[chat_id]
@@ -54,14 +60,13 @@ def update_chat_setting(chat_id, key, value):
             "max_tokens": 100,
             "top_p": 0.95,
             "repetition_penalty": 1.2,
-            "model": "saikrishnagorijala/Friday-V3"
+            "model": "openai-community/gpt2"
         }
     settings[chat_id][key] = value
     save_settings(settings)
 
 def generate_with_hf(prompt, settings):
     model = settings["model"]
-    url = f"https://router.huggingface.co/hf-inference/models/{model}"
     
     headers = {
         "Authorization": f"Bearer {HF_TOKEN}",
@@ -80,10 +85,16 @@ def generate_with_hf(prompt, settings):
         }
     }
     
+    url = f"https://api-inference.huggingface.co/models/{model}"
     response = requests.post(url, headers=headers, json=payload, timeout=120)
     
     if response.status_code == 503:
-        raise Exception("Модель загружается, подожди 20-30 сек и попробуй снова")
+        data = response.json()
+        wait_time = data.get("estimated_time", 30)
+        raise Exception(f"Модель загружается, подожди {int(wait_time)} сек")
+    
+    if response.status_code == 404:
+        raise Exception(f"Модель {model} не найдена. Используй /f_models")
     
     if response.status_code != 200:
         raise Exception(f"API {response.status_code}: {response.text[:200]}")
@@ -111,28 +122,36 @@ def health():
 @bot.message_handler(commands=['start'])
 def start_cmd(message):
     bot.reply_to(message, 
-        "Бот для генерации историй!\n\n"
+        "📖 Бот для генерации историй ануса!\n\n"
         "/f_generate <текст> - продолжить историю\n"
-        "/f_temperature 0.9 - креативность (0.1-2.0)\n"
-        "/f_maxtokens 100 - длина (10-500)\n"
-        "/f_model <название> - сменить модель\n"
+        "/f_temperature 0.9 - креативность\n"
+        "/f_maxtokens 100 - длина\n"
+        "/f_model <имя> - сменить модель\n"
         "/f_models - список моделей\n"
         "/f_settings - настройки"
     )
 
 @bot.message_handler(commands=['f_models'])
 def list_models(message):
-    text = "Доступные модели:\n\n"
-    for key, val in MODELS.items():
-        text += f"• {key} → {val}\n"
-    text += "\nИспользуй: /f_model friday"
+    text = "📋 Доступные модели:\n\n"
+    text += "🇬🇧 English:\n"
+    text += "• gpt2 (быстрая)\n"
+    text += "• gpt2-large\n"
+    text += "• gpt2-xl (лучше)\n"
+    text += "• bloom\n"
+    text += "• bloom-1b\n\n"
+    text += "🇷🇺 Русский:\n"
+    text += "• rugpt\n"
+    text += "• rugpt-small\n\n"
+    text += "Пример: /f_model gpt2-xl"
     bot.reply_to(message, text)
 
 @bot.message_handler(commands=['f_model'])
 def set_model(message):
     args = message.text.split()
     if len(args) < 2:
-        bot.reply_to(message, "/f_model friday\n/f_model rugpt\n\nИли полное имя:\n/f_model username/model-name")
+        s = get_chat_settings(message.chat.id)
+        bot.reply_to(message, f"Текущая: {s['model']}\n\nИспользуй: /f_model gpt2-xl")
         return
     
     model_key = args[1].lower()
@@ -225,7 +244,7 @@ def show_settings(message):
 def generate_text(message):
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
-        bot.reply_to(message, "/f_generate Вышел Витёк на крыльцо")
+        bot.reply_to(message, "/f_generate Once upon a time")
         return
     
     prompt = args[1]
@@ -239,6 +258,18 @@ def generate_text(message):
         bot.edit_message_text(result, message.chat.id, wait_msg.message_id)
     except Exception as e:
         bot.edit_message_text(f"❌ {str(e)[:500]}", message.chat.id, wait_msg.message_id)
+
+@bot.message_handler(commands=['f_test'])
+def test_api(message):
+    wait_msg = bot.reply_to(message, "🔄 Тестирую API...")
+    try:
+        url = "https://api-inference.huggingface.co/models/openai-community/gpt2"
+        headers = {"Authorization": f"Bearer {HF_TOKEN}"}
+        payload = {"inputs": "Hello", "parameters": {"max_new_tokens": 10}}
+        response = requests.post(url, headers=headers, json=payload, timeout=30)
+        bot.edit_message_text(f"Status: {response.status_code}\n{response.text[:500]}", message.chat.id, wait_msg.message_id)
+    except Exception as e:
+        bot.edit_message_text(f"❌ {str(e)}", message.chat.id, wait_msg.message_id)
 
 def run_bot():
     print("Bot starting...")
