@@ -16,15 +16,11 @@ bot = telebot.TeleBot(BOT_TOKEN)
 SETTINGS_FILE = "chat_settings.json"
 
 MODELS = {
-    "gpt2": "openai-community/gpt2",
-    "gpt2-large": "openai-community/gpt2-large",
-    "gpt2-xl": "openai-community/gpt2-xl",
+    "gpt2": "gpt2",
+    "gpt2-large": "gpt2-large",
+    "gpt2-xl": "gpt2-xl",
     "bloom": "bigscience/bloom-560m",
-    "bloom-1b": "bigscience/bloom-1b1",
-    "qwen": "Qwen/Qwen2.5-1.5B",
-    "smollm": "HuggingFaceTB/SmolLM2-1.7B",
-    "rugpt": "ai-forever/rugpt3medium_based_on_gpt2",
-    "rugpt-small": "ai-forever/rugpt3small_based_on_gpt2"
+    "rugpt": "sberbank-ai/rugpt3small_based_on_gpt2"
 }
 
 def load_settings():
@@ -46,7 +42,7 @@ def get_chat_settings(chat_id):
             "max_tokens": 100,
             "top_p": 0.95,
             "repetition_penalty": 1.2,
-            "model": "openai-community/gpt2"
+            "model": "gpt2"
         }
         save_settings(settings)
     return settings[chat_id]
@@ -60,15 +56,13 @@ def update_chat_setting(chat_id, key, value):
             "max_tokens": 100,
             "top_p": 0.95,
             "repetition_penalty": 1.2,
-            "model": "openai-community/gpt2"
+            "model": "gpt2"
         }
     settings[chat_id][key] = value
     save_settings(settings)
 
 def generate_with_hf(prompt, settings):
     model = settings["model"]
-    
-    url = f"https://router.huggingface.co/hf-inference/models/{model}"
     
     headers = {
         "Authorization": f"Bearer {HF_TOKEN}",
@@ -84,18 +78,20 @@ def generate_with_hf(prompt, settings):
             "repetition_penalty": settings["repetition_penalty"],
             "do_sample": True,
             "return_full_text": True
+        },
+        "options": {
+            "wait_for_model": True
         }
     }
     
+    url = f"https://router.huggingface.co/hf-inference/models/{model}"
     response = requests.post(url, headers=headers, json=payload, timeout=120)
     
     if response.status_code == 503:
-        data = response.json()
-        wait_time = data.get("estimated_time", 30)
-        raise Exception(f"Модель загружается, подожди {int(wait_time)} сек")
+        raise Exception("Модель загружается, подожди 30 сек")
     
-    if response.status_code == 404:
-        raise Exception(f"Модель {model} не найдена. Используй /f_models")
+    if response.status_code == 401:
+        raise Exception("Ошибка токена. Проверь HF_TOKEN")
     
     if response.status_code != 200:
         raise Exception(f"API {response.status_code}: {response.text[:300]}")
@@ -123,10 +119,8 @@ def health():
 @bot.message_handler(commands=['start'])
 def start_cmd(message):
     bot.reply_to(message, 
-        "📖 Бот для генерации анусного шипзека!\n\n"
-        "/f_generate <текст> - продолжить историю\n"
-        "/f_temperature 0.9 - креативность\n"
-        "/f_maxtokens 100 - длина\n"
+        "📖 Бот для генерации историй!\n\n"
+        "/f_generate <текст> - продолжить\n"
         "/f_model <имя> - сменить модель\n"
         "/f_models - список моделей\n"
         "/f_settings - настройки\n"
@@ -135,18 +129,10 @@ def start_cmd(message):
 
 @bot.message_handler(commands=['f_models'])
 def list_models(message):
-    text = "📋 Доступные модели:\n\n"
-    text += "🇬🇧 English:\n"
-    text += "• gpt2 (быстрая)\n"
-    text += "• gpt2-large\n"
-    text += "• gpt2-xl\n"
-    text += "• bloom\n"
-    text += "• qwen\n"
-    text += "• smollm\n\n"
-    text += "🇷🇺 Русский:\n"
-    text += "• rugpt\n"
-    text += "• rugpt-small\n\n"
-    text += "Пример: /f_model gpt2"
+    text = "📋 Модели:\n"
+    for key, val in MODELS.items():
+        text += f"• {key}\n"
+    text += "\n/f_model gpt2"
     bot.reply_to(message, text)
 
 @bot.message_handler(commands=['f_model'])
@@ -154,16 +140,11 @@ def set_model(message):
     args = message.text.split()
     if len(args) < 2:
         s = get_chat_settings(message.chat.id)
-        bot.reply_to(message, f"Текущая: {s['model']}\n\nИспользуй: /f_model gpt2")
+        bot.reply_to(message, f"Текущая: {s['model']}")
         return
     
     model_key = args[1].lower()
-    
-    if model_key in MODELS:
-        model = MODELS[model_key]
-    else:
-        model = args[1]
-    
+    model = MODELS.get(model_key, args[1])
     update_chat_setting(message.chat.id, "model", model)
     bot.reply_to(message, f"✓ Model: {model}")
 
@@ -178,8 +159,6 @@ def set_temperature(message):
         if 0.1 <= temp <= 2.0:
             update_chat_setting(message.chat.id, "temperature", temp)
             bot.reply_to(message, f"✓ Temperature: {temp}")
-        else:
-            bot.reply_to(message, "0.1 - 2.0")
     except:
         bot.reply_to(message, "Ошибка")
 
@@ -194,40 +173,6 @@ def set_max_tokens(message):
         if 10 <= tokens <= 500:
             update_chat_setting(message.chat.id, "max_tokens", tokens)
             bot.reply_to(message, f"✓ Max tokens: {tokens}")
-        else:
-            bot.reply_to(message, "10 - 500")
-    except:
-        bot.reply_to(message, "Ошибка")
-
-@bot.message_handler(commands=['f_topp'])
-def set_topp(message):
-    try:
-        args = message.text.split()
-        if len(args) < 2:
-            bot.reply_to(message, "/f_topp 0.95")
-            return
-        val = float(args[1])
-        if 0.1 <= val <= 1.0:
-            update_chat_setting(message.chat.id, "top_p", val)
-            bot.reply_to(message, f"✓ Top P: {val}")
-        else:
-            bot.reply_to(message, "0.1 - 1.0")
-    except:
-        bot.reply_to(message, "Ошибка")
-
-@bot.message_handler(commands=['f_penalty'])
-def set_penalty(message):
-    try:
-        args = message.text.split()
-        if len(args) < 2:
-            bot.reply_to(message, "/f_penalty 1.2")
-            return
-        val = float(args[1])
-        if 1.0 <= val <= 2.0:
-            update_chat_setting(message.chat.id, "repetition_penalty", val)
-            bot.reply_to(message, f"✓ Penalty: {val}")
-        else:
-            bot.reply_to(message, "1.0 - 2.0")
     except:
         bot.reply_to(message, "Ошибка")
 
@@ -238,75 +183,79 @@ def show_settings(message):
         f"⚙️ Настройки:\n"
         f"Model: {s['model']}\n"
         f"Temperature: {s['temperature']}\n"
-        f"Max tokens: {s['max_tokens']}\n"
-        f"Top P: {s['top_p']}\n"
-        f"Penalty: {s['repetition_penalty']}"
+        f"Max tokens: {s['max_tokens']}"
     )
 
 @bot.message_handler(commands=['f_generate'])
 def generate_text(message):
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
-        bot.reply_to(message, "/f_generate Once upon a time")
+        bot.reply_to(message, "/f_generate Hello world")
         return
     
     prompt = args[1]
     settings = get_chat_settings(message.chat.id)
-    wait_msg = bot.reply_to(message, "⏳ Генерирую...")
+    wait_msg = bot.reply_to(message, "⏳")
     
     try:
         result = generate_with_hf(prompt, settings)
         if len(result) > 4000:
-            result = result[:4000] + "..."
+            result = result[:4000]
         bot.edit_message_text(result, message.chat.id, wait_msg.message_id)
     except Exception as e:
         bot.edit_message_text(f"❌ {str(e)[:500]}", message.chat.id, wait_msg.message_id)
 
 @bot.message_handler(commands=['f_test'])
 def test_api(message):
-    wait_msg = bot.reply_to(message, "🔄 Тестирую новый API...")
-    try:
-        url = "https://router.huggingface.co/hf-inference/models/openai-community/gpt2"
-        headers = {"Authorization": f"Bearer {HF_TOKEN}"}
-        payload = {"inputs": "Hello world", "parameters": {"max_new_tokens": 20}}
-        response = requests.post(url, headers=headers, json=payload, timeout=60)
-        
-        text = f"Status: {response.status_code}\n\n"
-        if response.status_code == 200:
-            data = response.json()
-            if isinstance(data, list):
-                text += data[0].get("generated_text", str(data))
+    wait_msg = bot.reply_to(message, "🔄 Тест...")
+    
+    results = []
+    
+    urls = [
+        ("router.huggingface.co", "https://router.huggingface.co/hf-inference/models/gpt2"),
+    ]
+    
+    headers = {"Authorization": f"Bearer {HF_TOKEN}"}
+    payload = {"inputs": "Hello", "parameters": {"max_new_tokens": 5}}
+    
+    for name, url in urls:
+        try:
+            r = requests.post(url, headers=headers, json=payload, timeout=30)
+            results.append(f"{name}: {r.status_code}")
+            if r.status_code == 200:
+                data = r.json()
+                if isinstance(data, list):
+                    results.append(f"✓ {data[0].get('generated_text', '')[:50]}")
             else:
-                text += str(data)[:500]
-        else:
-            text += response.text[:500]
-        
-        bot.edit_message_text(text, message.chat.id, wait_msg.message_id)
-    except Exception as e:
-        bot.edit_message_text(f"❌ {str(e)}", message.chat.id, wait_msg.message_id)
+                results.append(f"  {r.text[:100]}")
+        except Exception as e:
+            results.append(f"{name}: ❌ {str(e)[:50]}")
+    
+    results.append(f"\nToken: {HF_TOKEN[:10]}..." if HF_TOKEN else "Token: NOT SET!")
+    
+    bot.edit_message_text("\n".join(results), message.chat.id, wait_msg.message_id)
+
+@bot.message_handler(commands=['f_debug'])
+def debug_token(message):
+    if HF_TOKEN:
+        bot.reply_to(message, f"Token exists: {HF_TOKEN[:8]}...{HF_TOKEN[-4:]}\nLength: {len(HF_TOKEN)}")
+    else:
+        bot.reply_to(message, "❌ HF_TOKEN не установлен!")
 
 def run_bot():
     print("Bot starting...")
     time.sleep(3)
-    
     try:
         bot.delete_webhook(drop_pending_updates=True)
     except:
         pass
-    
     time.sleep(2)
-    
     while True:
         try:
-            print("Polling started...")
             bot.polling(none_stop=True, interval=1, timeout=30)
         except Exception as e:
             print(f"Error: {e}")
             time.sleep(15)
-            try:
-                bot.delete_webhook(drop_pending_updates=True)
-            except:
-                pass
 
 if __name__ == '__main__':
     bot_thread = Thread(target=run_bot, daemon=True)
