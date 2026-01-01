@@ -13,7 +13,7 @@ HF_TOKEN = os.environ.get("HF_TOKEN")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-client = InferenceClient(api_key=HF_TOKEN)
+client = InferenceClient(token=HF_TOKEN)
 
 SETTINGS_FILE = "chat_settings.json"
 
