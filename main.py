@@ -21,8 +21,8 @@ MODELS = {
     "gpt2-xl": "openai-community/gpt2-xl",
     "bloom": "bigscience/bloom-560m",
     "bloom-1b": "bigscience/bloom-1b1",
-    "mistral": "mistralai/Mistral-7B-v0.1",
-    "llama": "meta-llama/Llama-2-7b-hf",
+    "qwen": "Qwen/Qwen2.5-1.5B",
+    "smollm": "HuggingFaceTB/SmolLM2-1.7B",
     "rugpt": "ai-forever/rugpt3medium_based_on_gpt2",
     "rugpt-small": "ai-forever/rugpt3small_based_on_gpt2"
 }
@@ -68,6 +68,8 @@ def update_chat_setting(chat_id, key, value):
 def generate_with_hf(prompt, settings):
     model = settings["model"]
     
+    url = f"https://router.huggingface.co/hf-inference/models/{model}"
+    
     headers = {
         "Authorization": f"Bearer {HF_TOKEN}",
         "Content-Type": "application/json"
@@ -85,7 +87,6 @@ def generate_with_hf(prompt, settings):
         }
     }
     
-    url = f"https://api-inference.huggingface.co/models/{model}"
     response = requests.post(url, headers=headers, json=payload, timeout=120)
     
     if response.status_code == 503:
@@ -97,7 +98,7 @@ def generate_with_hf(prompt, settings):
         raise Exception(f"Модель {model} не найдена. Используй /f_models")
     
     if response.status_code != 200:
-        raise Exception(f"API {response.status_code}: {response.text[:200]}")
+        raise Exception(f"API {response.status_code}: {response.text[:300]}")
     
     result = response.json()
     
@@ -122,13 +123,14 @@ def health():
 @bot.message_handler(commands=['start'])
 def start_cmd(message):
     bot.reply_to(message, 
-        "📖 Бот для генерации историй ануса!\n\n"
+        "📖 Бот для генерации анусного шипзека!\n\n"
         "/f_generate <текст> - продолжить историю\n"
         "/f_temperature 0.9 - креативность\n"
         "/f_maxtokens 100 - длина\n"
         "/f_model <имя> - сменить модель\n"
         "/f_models - список моделей\n"
-        "/f_settings - настройки"
+        "/f_settings - настройки\n"
+        "/f_test - проверить API"
     )
 
 @bot.message_handler(commands=['f_models'])
@@ -137,13 +139,14 @@ def list_models(message):
     text += "🇬🇧 English:\n"
     text += "• gpt2 (быстрая)\n"
     text += "• gpt2-large\n"
-    text += "• gpt2-xl (лучше)\n"
+    text += "• gpt2-xl\n"
     text += "• bloom\n"
-    text += "• bloom-1b\n\n"
+    text += "• qwen\n"
+    text += "• smollm\n\n"
     text += "🇷🇺 Русский:\n"
     text += "• rugpt\n"
     text += "• rugpt-small\n\n"
-    text += "Пример: /f_model gpt2-xl"
+    text += "Пример: /f_model gpt2"
     bot.reply_to(message, text)
 
 @bot.message_handler(commands=['f_model'])
@@ -151,7 +154,7 @@ def set_model(message):
     args = message.text.split()
     if len(args) < 2:
         s = get_chat_settings(message.chat.id)
-        bot.reply_to(message, f"Текущая: {s['model']}\n\nИспользуй: /f_model gpt2-xl")
+        bot.reply_to(message, f"Текущая: {s['model']}\n\nИспользуй: /f_model gpt2")
         return
     
     model_key = args[1].lower()
@@ -261,13 +264,24 @@ def generate_text(message):
 
 @bot.message_handler(commands=['f_test'])
 def test_api(message):
-    wait_msg = bot.reply_to(message, "🔄 Тестирую API...")
+    wait_msg = bot.reply_to(message, "🔄 Тестирую новый API...")
     try:
-        url = "https://api-inference.huggingface.co/models/openai-community/gpt2"
+        url = "https://router.huggingface.co/hf-inference/models/openai-community/gpt2"
         headers = {"Authorization": f"Bearer {HF_TOKEN}"}
-        payload = {"inputs": "Hello", "parameters": {"max_new_tokens": 10}}
-        response = requests.post(url, headers=headers, json=payload, timeout=30)
-        bot.edit_message_text(f"Status: {response.status_code}\n{response.text[:500]}", message.chat.id, wait_msg.message_id)
+        payload = {"inputs": "Hello world", "parameters": {"max_new_tokens": 20}}
+        response = requests.post(url, headers=headers, json=payload, timeout=60)
+        
+        text = f"Status: {response.status_code}\n\n"
+        if response.status_code == 200:
+            data = response.json()
+            if isinstance(data, list):
+                text += data[0].get("generated_text", str(data))
+            else:
+                text += str(data)[:500]
+        else:
+            text += response.text[:500]
+        
+        bot.edit_message_text(text, message.chat.id, wait_msg.message_id)
     except Exception as e:
         bot.edit_message_text(f"❌ {str(e)}", message.chat.id, wait_msg.message_id)
 
